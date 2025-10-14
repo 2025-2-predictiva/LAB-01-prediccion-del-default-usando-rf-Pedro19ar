@@ -92,3 +92,189 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+
+import os
+import json
+import gzip
+import pickle
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    precision_score,
+    balanced_accuracy_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
+
+
+
+
+def cargar_datos(ruta: str) -> pd.DataFrame:
+    """
+    Carga un archivo CSV comprimido (ZIP) y lo devuelve como DataFrame.
+    
+    Args:
+        ruta (str): ruta completa del archivo .zip
+    
+    Returns:
+        pd.DataFrame: datos cargados
+    """
+    return pd.read_csv(ruta, compression="zip", index_col=False)
+
+
+def limpiar_datos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpieza y preparación del dataset:
+    - Renombra la variable objetivo
+    - Elimina columnas sin valor predictivo
+    - Filtra datos no válidos de EDUCATION y MARRIAGE
+    - Agrupa niveles de educación poco frecuentes
+    """
+    df = df.rename(columns={"default payment next month": "default"})
+    df = df.drop(columns=["ID"])
+    df = df[df["MARRIAGE"] != 0]
+    df = df[df["EDUCATION"] != 0]
+    df["EDUCATION"] = df["EDUCATION"].apply(lambda x: x if x < 4 else 4)
+    return df
+
+
+def crear_pipeline() -> Pipeline:
+    """
+    Construye un pipeline con:
+    - Preprocesamiento: One-Hot Encoding para variables categóricas
+    - Modelo: Random Forest
+    """
+    cat_cols = ["SEX", "EDUCATION", "MARRIAGE"]
+
+    transformador = ColumnTransformer(
+        transformers=[
+            ("categoricas", OneHotEncoder(handle_unknown="ignore"), cat_cols)
+        ],
+        remainder="passthrough"
+    )
+
+    modelo = RandomForestClassifier(random_state=42)
+
+    return Pipeline([
+        ("preprocesamiento", transformador),
+        ("clasificador", modelo)
+    ])
+
+
+def configurar_gridsearch(pipeline: Pipeline) -> GridSearchCV:
+    """
+    Define el proceso de búsqueda de hiperparámetros usando GridSearchCV.
+    """
+    parametros = {
+        "clasificador__n_estimators": [50, 100, 200],
+        "clasificador__max_depth": [None, 5, 10, 20],
+        "clasificador__min_samples_split": [2, 5, 10],
+        "clasificador__min_samples_leaf": [1, 2, 4]
+    }
+
+    return GridSearchCV(
+        estimator=pipeline,
+        param_grid=parametros,
+        scoring="balanced_accuracy",
+        cv=10,
+        n_jobs=-1,
+        verbose=2,
+        refit=True
+    )
+
+
+def guardar_modelo(ruta: str, modelo):
+    """
+    Guarda el modelo entrenado en formato comprimido .pkl.gz.
+    """
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with gzip.open(ruta, "wb") as archivo:
+        pickle.dump(modelo, archivo)
+
+
+
+
+def calcular_metricas(nombre: str, y_real, y_pred):
+    """
+    Retorna las métricas más relevantes del modelo para un dataset dado.
+    """
+    return {
+        "type": "metrics",
+        "dataset": nombre,
+        "precision": precision_score(y_real, y_pred, zero_division=0),
+        "balanced_accuracy": balanced_accuracy_score(y_real, y_pred),
+        "recall": recall_score(y_real, y_pred, zero_division=0),
+        "f1_score": f1_score(y_real, y_pred, zero_division=0)
+    }
+
+
+def matriz_confusion_json(nombre: str, y_real, y_pred):
+    """
+    Retorna la matriz de confusión en formato estructurado (JSON-friendly).
+    """
+    cm = confusion_matrix(y_real, y_pred)
+    return {
+        "type": "cm_matrix",
+        "dataset": nombre,
+        "true_0": {"predicted_0": int(cm[0][0]), "predicted_1": int(cm[0][1])},
+        "true_1": {"predicted_0": int(cm[1][0]), "predicted_1": int(cm[1][1])}
+    }
+
+
+
+
+def main():
+    """
+    Ejecuta todo el flujo del proyecto:
+    - Carga y limpieza de datos
+    - Entrenamiento del modelo con GridSearchCV
+    - Evaluación del rendimiento
+    - Guardado del modelo y resultados
+    """
+
+    # --- Carga de datos ---
+    train_df = cargar_datos("files/input/train_data.csv.zip")
+    test_df = cargar_datos("files/input/test_data.csv.zip")
+
+    # --- Limpieza ---
+    train_df = limpiar_datos(train_df)
+    test_df = limpiar_datos(test_df)
+
+    # --- Separación de variables ---
+    X_train, y_train = train_df.drop(columns="default"), train_df["default"]
+    X_test, y_test = test_df.drop(columns="default"), test_df["default"]
+
+    # --- Creación del modelo ---
+    pipe = crear_pipeline()
+    grid = configurar_gridsearch(pipe)
+    grid.fit(X_train, y_train)
+
+    # --- Guardado del modelo ---
+    guardar_modelo("files/models/model.pkl.gz", grid)
+
+    # --- Evaluación ---
+    y_pred_train = grid.predict(X_train)
+    y_pred_test = grid.predict(X_test)
+
+    metricas_train = calcular_metricas("train", y_train, y_pred_train)
+    metricas_test = calcular_metricas("test", y_test, y_pred_test)
+
+    cm_train = matriz_confusion_json("train", y_train, y_pred_train)
+    cm_test = matriz_confusion_json("test", y_test, y_pred_test)
+
+    # --- Exportar resultados ---
+    os.makedirs("files/output/", exist_ok=True)
+    with open("files/output/metrics.json", "w") as f:
+        for item in [metricas_train, metricas_test, cm_train, cm_test]:
+            f.write(json.dumps(item) + "\n")
+
+
+if __name__ == "__main__":
+    main()
