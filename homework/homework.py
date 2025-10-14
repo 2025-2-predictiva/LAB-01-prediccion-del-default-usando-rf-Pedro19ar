@@ -94,12 +94,21 @@
 #
 
 
+# ===============================================
+# Proyecto: Clasificación de riesgo crediticio
+# Autor: [Tu nombre]
+# Descripción:
+#   Este script implementa un flujo completo de machine learning
+#   para entrenar, evaluar y guardar un modelo de Random Forest
+#   con búsqueda de hiperparámetros mediante GridSearchCV.
+# ===============================================
+
+# ---- Librerías principales ----
 import os
 import json
 import gzip
 import pickle
 import pandas as pd
-import numpy as np
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -114,29 +123,17 @@ from sklearn.metrics import (
 )
 
 
-
+# =========================================================
+# FUNCIONES AUXILIARES
+# =========================================================
 
 def cargar_datos(ruta: str) -> pd.DataFrame:
-    """
-    Carga un archivo CSV comprimido (ZIP) y lo devuelve como DataFrame.
-    
-    Args:
-        ruta (str): ruta completa del archivo .zip
-    
-    Returns:
-        pd.DataFrame: datos cargados
-    """
+
     return pd.read_csv(ruta, compression="zip", index_col=False)
 
 
 def limpiar_datos(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Limpieza y preparación del dataset:
-    - Renombra la variable objetivo
-    - Elimina columnas sin valor predictivo
-    - Filtra datos no válidos de EDUCATION y MARRIAGE
-    - Agrupa niveles de educación poco frecuentes
-    """
+
     df = df.rename(columns={"default payment next month": "default"})
     df = df.drop(columns=["ID"])
     df = df[df["MARRIAGE"] != 0]
@@ -146,11 +143,7 @@ def limpiar_datos(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def crear_pipeline() -> Pipeline:
-    """
-    Construye un pipeline con:
-    - Preprocesamiento: One-Hot Encoding para variables categóricas
-    - Modelo: Random Forest
-    """
+
     cat_cols = ["SEX", "EDUCATION", "MARRIAGE"]
 
     transformador = ColumnTransformer(
@@ -191,20 +184,18 @@ def configurar_gridsearch(pipeline: Pipeline) -> GridSearchCV:
 
 
 def guardar_modelo(ruta: str, modelo):
-    """
-    Guarda el modelo entrenado en formato comprimido .pkl.gz.
-    """
+
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     with gzip.open(ruta, "wb") as archivo:
         pickle.dump(modelo, archivo)
 
 
-
+# =========================================================
+# FUNCIONES DE EVALUACIÓN
+# =========================================================
 
 def calcular_metricas(nombre: str, y_real, y_pred):
-    """
-    Retorna las métricas más relevantes del modelo para un dataset dado.
-    """
+
     return {
         "type": "metrics",
         "dataset": nombre,
@@ -216,9 +207,7 @@ def calcular_metricas(nombre: str, y_real, y_pred):
 
 
 def matriz_confusion_json(nombre: str, y_real, y_pred):
-    """
-    Retorna la matriz de confusión en formato estructurado (JSON-friendly).
-    """
+
     cm = confusion_matrix(y_real, y_pred)
     return {
         "type": "cm_matrix",
@@ -228,16 +217,11 @@ def matriz_confusion_json(nombre: str, y_real, y_pred):
     }
 
 
-
+# =========================================================
+# FUNCIÓN PRINCIPAL
+# =========================================================
 
 def main():
-    """
-    Ejecuta todo el flujo del proyecto:
-    - Carga y limpieza de datos
-    - Entrenamiento del modelo con GridSearchCV
-    - Evaluación del rendimiento
-    - Guardado del modelo y resultados
-    """
 
     # --- Carga de datos ---
     train_df = cargar_datos("files/input/train_data.csv.zip")
@@ -270,11 +254,14 @@ def main():
     cm_test = matriz_confusion_json("test", y_test, y_pred_test)
 
     # --- Exportar resultados ---
-    os.makedirs("files/output/", exist_ok=True)
-    with open("files/output/metrics.json", "w") as f:
+    os.makedirs("../files/output/", exist_ok=True)
+    with open("../files/output/metrics.json", "w") as f:
         for item in [metricas_train, metricas_test, cm_train, cm_test]:
             f.write(json.dumps(item) + "\n")
 
 
+# =========================================================
+# PUNTO DE ENTRADA
+# =========================================================
 if __name__ == "__main__":
     main()
